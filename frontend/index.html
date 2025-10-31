@@ -5,6 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SiteScore AI</title>
   <link rel="stylesheet" href="styles.css" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    crossorigin=""
+    defer
+  ></script>
 </head>
 <body>
   <main>
@@ -53,82 +63,75 @@
     </details>
   </main>
 
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    crossorigin=""
-  />
   <script>
-    const API_BASE = 'http://127.0.0.1:8000';
+    window.addEventListener('DOMContentLoaded', () => {
+      const API_BASE = 'http://127.0.0.1:8000';
 
-    const map = L.map('map', { zoomControl: false }).setView([45.657, 25.601], 13);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors',
-    }).addTo(map);
-    const poiLayer = L.layerGroup().addTo(map);
-    const marker = L.circleMarker([45.657, 25.601], {
-      radius: 10,
-      color: '#0a84ff',
-      fillColor: '#0a84ff',
-      fillOpacity: 0.7,
-    }).addTo(poiLayer);
+      const map = L.map('map', { zoomControl: false }).setView([45.657, 25.601], 13);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors',
+      }).addTo(map);
+      const poiLayer = L.layerGroup().addTo(map);
+      const marker = L.circleMarker([45.657, 25.601], {
+        radius: 10,
+        color: '#0a84ff',
+        fillColor: '#0a84ff',
+        fillOpacity: 0.7,
+      }).addTo(poiLayer);
 
-    const formatScore = (score) => `${Number(score).toFixed(1)} / 100`;
+      const formatScore = (score) => `${Number(score).toFixed(1)} / 100`;
 
-    function renderCategories(categories) {
-      const container = document.getElementById('categoryList');
-      container.innerHTML = '';
-      Object.entries(categories)
-        .sort((a, b) => b[1].score - a[1].score)
-        .forEach(([name, info]) => {
-          const card = document.createElement('article');
-          card.className = 'category-card';
-          card.innerHTML = `
-          <h3>${name}</h3>
-          <p class="card-score">${formatScore(info.score)}</p>
-          <p class="card-meta">${info.count} puncte de interes</p>
-          <p class="card-meta">Prag ${info.threshold}</p>
-        `;
-        container.appendChild(card);
-      });
-    }
-
-    async function evaluateLocation() {
-      const lat = parseFloat(document.getElementById('lat').value);
-      const lon = parseFloat(document.getElementById('lon').value);
-      const radius = parseInt(document.getElementById('radius').value, 10);
-      const params = new URLSearchParams({ lat, lon, radius_m: radius });
-      document.getElementById('overallScore').textContent = '–';
-      document.getElementById('poiSummary').textContent = 'Se prelucrează...';
-      document.getElementById('categoryList').innerHTML = '';
-
-      try {
-        const response = await fetch(`${API_BASE}/scorecard?${params.toString()}`);
-        if (!response.ok) {
-          throw new Error(`Eroare API (${response.status})`);
-        }
-        const payload = await response.json();
-        document.getElementById('out').textContent = JSON.stringify(payload, null, 2);
-        document.getElementById('overallScore').textContent = formatScore(payload.summary.overall_score);
-        document.getElementById('poiSummary').textContent = `${payload.summary.total_pois} POI în ${payload.radius_m}m (cache: ${payload.source.cache_hit ? 'da' : 'nu'})`;
-        renderCategories(payload.categories);
-
-        marker.setLatLng([payload.coordinates.lat, payload.coordinates.lon]);
-        map.setView([payload.coordinates.lat, payload.coordinates.lon], 14);
-      } catch (error) {
-        document.getElementById('poiSummary').textContent = error.message;
+      function renderCategories(categories) {
+        const container = document.getElementById('categoryList');
+        container.innerHTML = '';
+        Object.entries(categories)
+          .sort((a, b) => b[1].score - a[1].score)
+          .forEach(([name, info]) => {
+            const card = document.createElement('article');
+            card.className = 'category-card';
+            card.innerHTML = `
+            <h3>${name}</h3>
+            <p class="card-score">${formatScore(info.score)}</p>
+            <p class="card-meta">${info.count} puncte de interes</p>
+            <p class="card-meta">Prag ${info.threshold}</p>
+          `;
+          container.appendChild(card);
+        });
       }
-    }
 
-    document.getElementById('go').addEventListener('click', evaluateLocation);
-    document.getElementById('exportPdf').addEventListener('click', () => {
-      alert('Exportul PDF va fi disponibil în iterația următoare.');
+      async function evaluateLocation() {
+        const lat = parseFloat(document.getElementById('lat').value);
+        const lon = parseFloat(document.getElementById('lon').value);
+        const radius = parseInt(document.getElementById('radius').value, 10);
+        const params = new URLSearchParams({ lat, lon, radius_m: radius });
+        document.getElementById('overallScore').textContent = '–';
+        document.getElementById('poiSummary').textContent = 'Se prelucrează...';
+        document.getElementById('categoryList').innerHTML = '';
+
+        try {
+          const response = await fetch(`${API_BASE}/scorecard?${params.toString()}`);
+          if (!response.ok) {
+            throw new Error(`Eroare API (${response.status})`);
+          }
+          const payload = await response.json();
+          document.getElementById('out').textContent = JSON.stringify(payload, null, 2);
+          document.getElementById('overallScore').textContent = formatScore(payload.summary.overall_score);
+          document.getElementById('poiSummary').textContent = `${payload.summary.total_pois} POI în ${payload.radius_m}m (cache: ${payload.source.cache_hit ? 'da' : 'nu'})`;
+          renderCategories(payload.categories);
+
+          marker.setLatLng([payload.coordinates.lat, payload.coordinates.lon]);
+          map.setView([payload.coordinates.lat, payload.coordinates.lon], 14);
+        } catch (error) {
+          document.getElementById('poiSummary').textContent = error.message;
+        }
+      }
+
+      document.getElementById('go').addEventListener('click', evaluateLocation);
+      document.getElementById('exportPdf').addEventListener('click', () => {
+        alert('Exportul PDF va fi disponibil în iterația următoare.');
+      });
     });
   </script>
 </body>
 </html>
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    crossorigin=""
-  ></script>
