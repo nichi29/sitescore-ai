@@ -1,5 +1,7 @@
 import logging
+import math
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -24,41 +26,64 @@ app.add_middleware(
 # Valorile sunt seturi pentru lookup rapid (amenity=restaurant etc).
 CATEGORY_TAGS: Dict[str, List[Dict[str, Set[str]]]] = {
     "commercial": [
-        {"key": "amenity", "values": {"restaurant", "cafe", "bar", "fast_food", "bank", "pharmacy"}},
-        {"key": "shop", "values": {"supermarket", "convenience", "mall", "clothes", "bakery", "butcher"}},
-        {"key": "office", "values": set()},  # orice tip de office
+        {"key": "shop", "values": {"supermarket", "convenience", "mall", "department_store", "clothes", "shoes", "electronics", "beauty", "butcher", "bakery", "greengrocer", "hardware", "doityourself"}},
+        {"key": "amenity", "values": {"marketplace", "bank", "bureau_de_change"}},
+        {"key": "office", "values": {"company", "commercial", "industrial"}},
+        {"key": "craft", "values": {"car_repair", "shoemaker", "tailor", "jeweller"}},
     ],
-    "educational": [
-        {"key": "amenity", "values": {"school", "college", "university", "kindergarten", "library"}},
+    "hospitality": [
+        {"key": "amenity", "values": {"restaurant", "cafe", "fast_food", "bar", "pub", "biergarten"}},
+        {"key": "tourism", "values": {"hotel", "guest_house", "hostel", "motel", "apartment", "chalet", "camp_site", "resort"}},
+        {"key": "amenity", "values": {"food_court"}},
     ],
-    "recreational": [
-        {"key": "leisure", "values": {"park", "pitch", "sports_centre", "fitness_centre", "swimming_pool"}},
-        {"key": "amenity", "values": {"cinema", "theatre", "arts_centre", "community_centre"}},
-        {"key": "tourism", "values": {"museum", "gallery", "attraction"}},
+    "education": [
+        {"key": "amenity", "values": {"school", "college", "university", "kindergarten", "library", "language_school", "music_school", "driving_school"}},
     ],
-    "infrastructure": [
-        {"key": "amenity", "values": {"bus_station", "parking", "fuel", "hospital"}},
-        {"key": "highway", "values": {"bus_stop", "services", "rest_area", "motorway_junction"}},
-        {"key": "railway", "values": set()},  # linii și stații feroviare
+    "recreation": [
+        {"key": "leisure", "values": {"park", "pitch", "sports_centre", "fitness_centre", "swimming_pool", "playground", "stadium", "recreation_ground"}},
+        {"key": "amenity", "values": {"cinema", "theatre", "arts_centre", "community_centre", "nightclub"}},
+        {"key": "tourism", "values": {"museum", "gallery", "attraction", "theme_park", "zoo"}},
+    ],
+    "healthcare": [
+        {"key": "amenity", "values": {"hospital", "clinic", "doctors", "dentist", "pharmacy", "veterinary", "social_facility", "physiotherapist"}},
+        {"key": "healthcare", "values": set()},
+    ],
+    "transport": [
+        {"key": "amenity", "values": {"bus_station", "taxi", "ferry_terminal", "fuel", "charging_station", "parking", "parking_entrance"}},
+        {"key": "public_transport", "values": {"station", "stop_position", "platform"}},
+        {"key": "railway", "values": {"station", "stop", "halt", "tram_stop", "light_rail_station"}},
+        {"key": "highway", "values": {"bus_stop", "motorway_junction", "rest_area", "services", "service_area"}},
+        {"key": "aeroway", "values": {"aerodrome", "terminal", "gate"}},
+    ],
+    "public_services": [
+        {"key": "amenity", "values": {"townhall", "public_building", "police", "fire_station", "courthouse", "post_office", "embassy", "customs"}},
+        {"key": "office", "values": {"government", "administrative", "tax", "ngo"}},
+        {"key": "amenity", "values": {"social_facility"}},
     ],
 }
 
 CATEGORY_WEIGHTS: Dict[str, float] = {
-    "commercial": 0.4,
-    "educational": 0.2,
-    "recreational": 0.2,
-    "infrastructure": 0.2,
+    "commercial": 0.25,
+    "hospitality": 0.2,
+    "education": 0.1,
+    "recreation": 0.1,
+    "healthcare": 0.15,
+    "transport": 0.1,
+    "public_services": 0.1,
 }
 
 CATEGORY_THRESHOLDS: Dict[str, int] = {
-    "commercial": 120,
-    "educational": 25,
-    "recreational": 40,
-    "infrastructure": 30,
+    "commercial": 150,
+    "hospitality": 120,
+    "education": 30,
+    "recreation": 60,
+    "healthcare": 40,
+    "transport": 50,
+    "public_services": 30,
 }
 
 OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter"
-OVERPASS_TIMEOUT_SECONDS = int(os.getenv("SITESCORE_OVERPASS_TIMEOUT", "30"))
+OVERPASS_TIMEOUT_SECONDS = int(os.getenv("SITESCORE_OVERPASS_TIMEOUT", "45"))
 CACHE_TTL_SECONDS = int(os.getenv("SITESCORE_CACHE_TTL_SECONDS", "300"))
 MAX_CACHE_SIZE = int(os.getenv("SITESCORE_CACHE_MAX_SIZE", "64"))
 MIN_OVERPASS_INTERVAL_SECONDS = float(os.getenv("SITESCORE_MIN_OVERPASS_INTERVAL", "1.0"))
@@ -67,6 +92,7 @@ NOMINATIM_TIMEOUT_SECONDS = int(os.getenv("SITESCORE_NOMINATIM_TIMEOUT", "10"))
 GEOCODE_CACHE_TTL_SECONDS = int(os.getenv("SITESCORE_GEOCODE_TTL_SECONDS", "600"))
 GEOCODE_MAX_CACHE = int(os.getenv("SITESCORE_GEOCODE_MAX_SIZE", "128"))
 GEOCODE_MIN_QUERY = int(os.getenv("SITESCORE_GEOCODE_MIN_QUERY", "3"))
+DEFAULT_RADII_METERS = [300, 800, 1500]
 
 _overpass_cache: Dict[Tuple[float, float, int], Tuple[float, List[Dict]]] = {}
 _cache_lock = threading.Lock()
@@ -77,6 +103,18 @@ _geocode_cache: Dict[Tuple[str, int], Tuple[float, List[Dict]]] = {}
 def _normalize_coord(value: float) -> float:
     """Reduce precizia coordonatelor pentru o cheie de cache mai stabilă."""
     return round(value, 5)
+
+
+def _haversine_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculează distanța dintre două puncte (metri) folosind formula haversine."""
+    r = 6371000.0  # raza Pământului (metri)
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return r * c
 
 
 def _build_selector(key: str, values: Set[str]) -> str:
@@ -175,25 +213,55 @@ def _matches_rule(tags: Dict[str, str], rule: Dict[str, Set[str]]) -> bool:
     return not values or value in values
 
 
-def aggregate_categories(elements: List[Dict]) -> Tuple[Dict[str, int], int]:
-    """Agregă elementele pe categorii și calculează totalul unic."""
-    category_hits: Dict[str, Set[Tuple[str, int]]] = {
-        category: set() for category in CATEGORY_TAGS
+def aggregate_categories(
+    elements: List[Dict], lat: float, lon: float, radii: List[int]
+) -> Tuple[Dict[int, Dict[str, int]], Dict[int, int]]:
+    """Agregă elementele pe categorii și calculează totalul unic pentru fiecare rază."""
+    radii_sorted = sorted(set(radii))
+    category_hits: Dict[int, Dict[str, Set[Tuple[str, int]]]] = {
+        radius: {category: set() for category in CATEGORY_TAGS} for radius in radii_sorted
     }
-    unique_ids: Set[Tuple[str, int]] = set()
+    unique_ids: Dict[int, Set[Tuple[str, int]]] = {radius: set() for radius in radii_sorted}
 
     for element in elements:
         tags = element.get("tags") or {}
         if not tags:
             continue
-        element_id = (element.get("type", "node"), int(element.get("id", 0)))
-        for category, rules in CATEGORY_TAGS.items():
-            if any(_matches_rule(tags, rule) for rule in rules):
-                category_hits[category].add(element_id)
-                unique_ids.add(element_id)
 
-    counts = {category: len(ids) for category, ids in category_hits.items()}
-    return counts, len(unique_ids)
+        center = element.get("center")
+        if center:
+            el_lat, el_lon = center.get("lat"), center.get("lon")
+        else:
+            el_lat, el_lon = element.get("lat"), element.get("lon")
+
+        if el_lat is None or el_lon is None:
+            continue
+
+        distance = _haversine_distance_m(lat, lon, float(el_lat), float(el_lon))
+        if distance > radii_sorted[-1]:
+            continue
+
+        element_id = (element.get("type", "node"), int(element.get("id", 0)))
+
+        matched_categories = [
+            category for category, rules in CATEGORY_TAGS.items() if any(_matches_rule(tags, rule) for rule in rules)
+        ]
+        if not matched_categories:
+            continue
+
+        for radius in radii_sorted:
+            if distance <= radius:
+                for category in matched_categories:
+                    category_hits[radius][category].add(element_id)
+                    unique_ids[radius].add(element_id)
+
+    counts_by_radius: Dict[int, Dict[str, int]] = {}
+    totals_by_radius: Dict[int, int] = {}
+    for radius in radii_sorted:
+        counts_by_radius[radius] = {category: len(ids) for category, ids in category_hits[radius].items()}
+        totals_by_radius[radius] = len(unique_ids[radius])
+
+    return counts_by_radius, totals_by_radius
 
 
 def compute_scores(category_counts: Dict[str, int]) -> Tuple[Dict[str, Dict[str, float]], float]:
@@ -273,16 +341,24 @@ def health():
 @app.get("/poi_summary")
 def poi_summary(lat: float, lon: float, radius_m: int = 1000):
     try:
-        elements, cache_hit = fetch_osm_elements(lat, lon, radius_m)
-        category_counts, total_unique = aggregate_categories(elements)
+        radii = sorted(set(DEFAULT_RADII_METERS + [radius_m]))
+        elements, cache_hit = fetch_osm_elements(lat, lon, max(radii))
+        category_counts_by_radius, totals_by_radius = aggregate_categories(elements, lat, lon, radii)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return {
         "coordinates": {"lat": lat, "lon": lon},
         "radius_m": radius_m,
-        "total_pois": total_unique,
-        "categories": category_counts,
+        "total_pois": totals_by_radius.get(radius_m, 0),
+        "radii": radii,
+        "radii_breakdown": {
+            radius: {
+                "total_pois": totals_by_radius.get(radius, 0),
+                "categories": category_counts_by_radius.get(radius, {}),
+            }
+            for radius in radii
+        },
         "source": {"cache_hit": cache_hit, "ttl_seconds": CACHE_TTL_SECONDS},
     }
 
@@ -290,9 +366,24 @@ def poi_summary(lat: float, lon: float, radius_m: int = 1000):
 @app.get("/scorecard")
 def scorecard(lat: float, lon: float, radius_m: int = 1000):
     try:
-        elements, cache_hit = fetch_osm_elements(lat, lon, radius_m)
-        category_counts, total_unique = aggregate_categories(elements)
-        category_details, overall_score = compute_scores(category_counts)
+        radii = sorted(set(DEFAULT_RADII_METERS + [radius_m]))
+        elements, cache_hit = fetch_osm_elements(lat, lon, max(radii))
+        category_counts_by_radius, totals_by_radius = aggregate_categories(elements, lat, lon, radii)
+        target_counts = category_counts_by_radius.get(radius_m) or {}
+        category_details, overall_score = compute_scores(target_counts)
+        radius_scores: Dict[int, Dict[str, float]] = {}
+        for radius in radii:
+            if radius == radius_m:
+                radius_scores[radius] = {
+                    "overall_score": overall_score,
+                    "total_pois": totals_by_radius.get(radius, 0),
+                }
+            else:
+                _, radius_overall = compute_scores(category_counts_by_radius.get(radius, {}))
+                radius_scores[radius] = {
+                    "overall_score": radius_overall,
+                    "total_pois": totals_by_radius.get(radius, 0),
+                }
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -302,10 +393,13 @@ def scorecard(lat: float, lon: float, radius_m: int = 1000):
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "summary": {
             "overall_score": overall_score,
-            "total_pois": total_unique,
+            "total_pois": totals_by_radius.get(radius_m, 0),
         },
         "categories": category_details,
         "weights": CATEGORY_WEIGHTS,
+        "radii": radii,
+        "radius_summary": radius_scores,
+        "categories_by_radius": category_counts_by_radius,
         "source": {"cache_hit": cache_hit, "ttl_seconds": CACHE_TTL_SECONDS},
     }
 
