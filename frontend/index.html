@@ -2,16 +2,30 @@
 <html lang="ro">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SiteScore AI</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <h1>SiteScore AI — Demo</h1>
+  <main>
+    <p class="eyebrow">Beta Preview</p>
+    <h1>SiteScore AI — Demo</h1>
+    <p class="lede">Analizează rapid performanța locațiilor cu ajutorul inteligenței artificiale, extrăgând scoruri relevante pentru business-ul tău.</p>
 
-  <label>Lat: <input id="lat" value="45.657"></label>
-  <label>Lon: <input id="lon" value="25.601"></label>
-  <button id="go">Calculează</button>
+    <form onsubmit="return false;">
+      <div class="field">
+        <label for="lat">Latitudine</label>
+        <input id="lat" type="number" step="any" value="45.657" />
+      </div>
+      <div class="field">
+        <label for="lon">Longitudine</label>
+        <input id="lon" type="number" step="any" value="25.601" />
+      </div>
+      <button type="button" id="go">Calculează scorul</button>
+    </form>
 
-  <pre id="out"></pre>
+    <pre id="out" aria-live="polite"></pre>
+  </main>
 
   <script>
     document.getElementById('go').onclick = async () => {
