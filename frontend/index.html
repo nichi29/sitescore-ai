@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SiteScore AI</title>
   <link rel="stylesheet" href="styles.css" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha512-sA+e2gNhtybdVY8JrIoVNewc19hXtOD87b5iV/mQJu1nvLK5j1WFJsbgx5caX5/C/POb44IVdQv0CPthe5r5mA=="
+    crossorigin=""
+  />
 </head>
 <body>
   <main>
@@ -12,7 +18,7 @@
     <h1>SiteScore AI — Demo</h1>
     <p class="lede">Analizează rapid performanța locațiilor cu ajutorul inteligenței artificiale, extrăgând scoruri relevante pentru business-ul tău.</p>
 
-    <form onsubmit="return false;">
+    <form onsubmit="return false;" class="controls">
       <div class="field">
         <label for="lat">Latitudine</label>
         <input id="lat" type="number" step="any" value="45.657" />
@@ -21,19 +27,110 @@
         <label for="lon">Longitudine</label>
         <input id="lon" type="number" step="any" value="25.601" />
       </div>
+      <div class="field">
+        <label for="radius">Rază (m)</label>
+        <input id="radius" type="number" step="100" value="1000" min="100" />
+      </div>
       <button type="button" id="go">Calculează scorul</button>
+      <button type="button" id="exportPdf" class="ghost">Export raport PDF</button>
     </form>
 
-    <pre id="out" aria-live="polite"></pre>
+    <div class="dashboard">
+      <section class="panel panel--score">
+        <header>
+          <h2>Scor general</h2>
+          <p class="score-value" id="overallScore">–</p>
+        </header>
+        <p class="score-meta" id="poiSummary">Nicio interogare încă.</p>
+        <div class="categories" id="categoryList"></div>
+      </section>
+      <section class="panel panel--map">
+        <header>
+          <h2>Hartă locație</h2>
+          <p class="score-meta">Heatmap-ul va sosi în pasul următor</p>
+        </header>
+        <div id="map" role="presentation"></div>
+      </section>
+    </div>
+
+    <details class="inspector">
+      <summary>JSON brut</summary>
+      <pre id="out" aria-live="polite"></pre>
+    </details>
   </main>
 
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha512-vM0kVpG1Czv8k6GQ4v1QW2N7GpStO2Qd6hwMRyYB9H9n1tFoZT3zh0ElBTtPlkV48Gj2fG5W0zWD07wZkBKNQw=="
+    crossorigin=""
+  ></script>
   <script>
-    document.getElementById('go').onclick = async () => {
-      const lat = document.getElementById('lat').value;
-      const lon = document.getElementById('lon').value;
-      const r = await fetch(`http://127.0.0.1:8000/score?lat=${lat}&lon=${lon}`);
-      document.getElementById('out').textContent = JSON.stringify(await r.json(), null, 2);
-    };
+    const API_BASE = 'http://127.0.0.1:8000';
+
+    const map = L.map('map', { zoomControl: false }).setView([45.657, 25.601], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(map);
+    const poiLayer = L.layerGroup().addTo(map);
+    const marker = L.circleMarker([45.657, 25.601], {
+      radius: 10,
+      color: '#0a84ff',
+      fillColor: '#0a84ff',
+      fillOpacity: 0.7,
+    }).addTo(poiLayer);
+
+    const formatScore = (score) => `${Number(score).toFixed(1)} / 100`;
+
+    function renderCategories(categories) {
+      const container = document.getElementById('categoryList');
+      container.innerHTML = '';
+      Object.entries(categories)
+        .sort((a, b) => b[1].score - a[1].score)
+        .forEach(([name, info]) => {
+          const card = document.createElement('article');
+          card.className = 'category-card';
+          card.innerHTML = `
+          <h3>${name}</h3>
+          <p class="card-score">${formatScore(info.score)}</p>
+          <p class="card-meta">${info.count} puncte de interes</p>
+          <p class="card-meta">Prag ${info.threshold}</p>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    async function evaluateLocation() {
+      const lat = parseFloat(document.getElementById('lat').value);
+      const lon = parseFloat(document.getElementById('lon').value);
+      const radius = parseInt(document.getElementById('radius').value, 10);
+      const params = new URLSearchParams({ lat, lon, radius_m: radius });
+      document.getElementById('overallScore').textContent = '–';
+      document.getElementById('poiSummary').textContent = 'Se prelucrează...';
+      document.getElementById('categoryList').innerHTML = '';
+
+      try {
+        const response = await fetch(`${API_BASE}/scorecard?${params.toString()}`);
+        if (!response.ok) {
+          throw new Error(`Eroare API (${response.status})`);
+        }
+        const payload = await response.json();
+        document.getElementById('out').textContent = JSON.stringify(payload, null, 2);
+        document.getElementById('overallScore').textContent = formatScore(payload.summary.overall_score);
+        document.getElementById('poiSummary').textContent = `${payload.summary.total_pois} POI în ${payload.radius_m}m (cache: ${payload.source.cache_hit ? 'da' : 'nu'})`;
+        renderCategories(payload.categories);
+
+        marker.setLatLng([payload.coordinates.lat, payload.coordinates.lon]);
+        map.setView([payload.coordinates.lat, payload.coordinates.lon], 14);
+      } catch (error) {
+        document.getElementById('poiSummary').textContent = error.message;
+      }
+    }
+
+    document.getElementById('go').addEventListener('click', evaluateLocation);
+    document.getElementById('exportPdf').addEventListener('click', () => {
+      alert('Exportul PDF va fi disponibil în iterația următoare.');
+    });
   </script>
 </body>
 </html>

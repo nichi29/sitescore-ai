@@ -1,10 +1,247 @@
-from fastapi import FastAPI
+import logging
+import os
+import threading
+import time
+from datetime import datetime, timezone
+from typing import Dict, List, Set, Tuple
+
+from fastapi import FastAPI, HTTPException
+import requests
 
 app = FastAPI(title="SiteScore AI")
+
+# Definim categoriile principale și tag-urile OSM asociate.
+# Valorile sunt seturi pentru lookup rapid (amenity=restaurant etc).
+CATEGORY_TAGS: Dict[str, List[Dict[str, Set[str]]]] = {
+    "commercial": [
+        {"key": "amenity", "values": {"restaurant", "cafe", "bar", "fast_food", "bank", "pharmacy"}},
+        {"key": "shop", "values": {"supermarket", "convenience", "mall", "clothes", "bakery", "butcher"}},
+        {"key": "office", "values": set()},  # orice tip de office
+    ],
+    "educational": [
+        {"key": "amenity", "values": {"school", "college", "university", "kindergarten", "library"}},
+    ],
+    "recreational": [
+        {"key": "leisure", "values": {"park", "pitch", "sports_centre", "fitness_centre", "swimming_pool"}},
+        {"key": "amenity", "values": {"cinema", "theatre", "arts_centre", "community_centre"}},
+        {"key": "tourism", "values": {"museum", "gallery", "attraction"}},
+    ],
+    "infrastructure": [
+        {"key": "amenity", "values": {"bus_station", "parking", "fuel", "hospital"}},
+        {"key": "highway", "values": {"bus_stop", "services", "rest_area", "motorway_junction"}},
+        {"key": "railway", "values": set()},  # linii și stații feroviare
+    ],
+}
+
+CATEGORY_WEIGHTS: Dict[str, float] = {
+    "commercial": 0.4,
+    "educational": 0.2,
+    "recreational": 0.2,
+    "infrastructure": 0.2,
+}
+
+CATEGORY_THRESHOLDS: Dict[str, int] = {
+    "commercial": 120,
+    "educational": 25,
+    "recreational": 40,
+    "infrastructure": 30,
+}
+
+OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter"
+OVERPASS_TIMEOUT_SECONDS = int(os.getenv("SITESCORE_OVERPASS_TIMEOUT", "30"))
+CACHE_TTL_SECONDS = int(os.getenv("SITESCORE_CACHE_TTL_SECONDS", "300"))
+MAX_CACHE_SIZE = int(os.getenv("SITESCORE_CACHE_MAX_SIZE", "64"))
+MIN_OVERPASS_INTERVAL_SECONDS = float(os.getenv("SITESCORE_MIN_OVERPASS_INTERVAL", "1.0"))
+
+_overpass_cache: Dict[Tuple[float, float, int], Tuple[float, List[Dict]]] = {}
+_cache_lock = threading.Lock()
+_last_overpass_call = 0.0
+
+
+def _normalize_coord(value: float) -> float:
+    """Reduce precizia coordonatelor pentru o cheie de cache mai stabilă."""
+    return round(value, 5)
+
+
+def _build_selector(key: str, values: Set[str]) -> str:
+    """Construiește selectorul Overpass pentru o cheie și o listă de valori."""
+    if not values:
+        return f'["{key}"]'
+    # Folosim regex OR pentru a evita duplicarea blocurilor.
+    pattern = "|".join(sorted(values))
+    return f'["{key}"~"^(?:{pattern})$"]'
+
+
+def build_overpass_query(lat: float, lon: float, radius_m: int) -> str:
+    """Generează interogarea Overpass pentru toate categoriile definite."""
+    clauses: List[str] = []
+    seen: Set[Tuple[str, Tuple[str, ...]]] = set()
+
+    for rules in CATEGORY_TAGS.values():
+        for rule in rules:
+            key = rule["key"]
+            ordered_values = tuple(sorted(rule["values"]))
+            signature = (key, ordered_values)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            selector = _build_selector(key, rule["values"])
+            clauses.extend(
+                [
+                    f"  node{selector}(around:{radius_m},{lat},{lon});",
+                    f"  way{selector}(around:{radius_m},{lat},{lon});",
+                    f"  relation{selector}(around:{radius_m},{lat},{lon});",
+                ]
+            )
+
+    union_block = "\n".join(clauses)
+    query = f"""
+[out:json][timeout:{OVERPASS_TIMEOUT_SECONDS}];
+(
+{union_block}
+);
+out center;
+"""
+    return query.strip()
+
+
+def fetch_osm_elements(lat: float, lon: float, radius_m: int = 1000) -> Tuple[List[Dict], bool]:
+    """Interoghează Overpass API și întoarce elementele brute + info cache."""
+    global _last_overpass_call
+    cache_key = (_normalize_coord(lat), _normalize_coord(lon), radius_m)
+    now = time.monotonic()
+    with _cache_lock:
+        cached = _overpass_cache.get(cache_key)
+        if cached and now - cached[0] <= CACHE_TTL_SECONDS:
+            return cached[1], True
+        delay = max(0.0, MIN_OVERPASS_INTERVAL_SECONDS - (now - _last_overpass_call))
+
+    if delay > 0:
+        time.sleep(delay)
+
+    query = build_overpass_query(lat, lon, radius_m)
+    try:
+        response = requests.post(
+            OVERPASS_ENDPOINT,
+            data={"data": query},
+            timeout=OVERPASS_TIMEOUT_SECONDS + 5,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logging.exception("Eroare la interogarea Overpass API")
+        raise RuntimeError("Overpass API indisponibil sau limitat temporar") from exc
+
+    payload = response.json()
+    elements = payload.get("elements", [])
+
+    now = time.monotonic()
+    with _cache_lock:
+        _last_overpass_call = now
+        _overpass_cache[cache_key] = (now, elements)
+        if len(_overpass_cache) > MAX_CACHE_SIZE:
+            # Ștergem cea mai veche intrare din cache pentru a evita creșterea necontrolată.
+            oldest_key = min(_overpass_cache.items(), key=lambda item: item[1][0])[0]
+            if oldest_key != cache_key:
+                _overpass_cache.pop(oldest_key, None)
+
+    return elements, False
+
+
+def _matches_rule(tags: Dict[str, str], rule: Dict[str, Set[str]]) -> bool:
+    """Verifică dacă un element OSM respectă regula unei categorii."""
+    value = tags.get(rule["key"])
+    if value is None:
+        return False
+    values = rule["values"]
+    return not values or value in values
+
+
+def aggregate_categories(elements: List[Dict]) -> Tuple[Dict[str, int], int]:
+    """Agregă elementele pe categorii și calculează totalul unic."""
+    category_hits: Dict[str, Set[Tuple[str, int]]] = {
+        category: set() for category in CATEGORY_TAGS
+    }
+    unique_ids: Set[Tuple[str, int]] = set()
+
+    for element in elements:
+        tags = element.get("tags") or {}
+        if not tags:
+            continue
+        element_id = (element.get("type", "node"), int(element.get("id", 0)))
+        for category, rules in CATEGORY_TAGS.items():
+            if any(_matches_rule(tags, rule) for rule in rules):
+                category_hits[category].add(element_id)
+                unique_ids.add(element_id)
+
+    counts = {category: len(ids) for category, ids in category_hits.items()}
+    return counts, len(unique_ids)
+
+
+def compute_scores(category_counts: Dict[str, int]) -> Tuple[Dict[str, Dict[str, float]], float]:
+    """Calculează scorurile normalizate pe categorie și scorul total."""
+    detailed: Dict[str, Dict[str, float]] = {}
+    weighted_sum = 0.0
+
+    for category in CATEGORY_TAGS:
+        count = category_counts.get(category, 0)
+        threshold = CATEGORY_THRESHOLDS.get(category, 1)
+        weight = CATEGORY_WEIGHTS.get(category, 0.0)
+        normalized = min(count / threshold, 1.0)
+        score = round(normalized * 100, 1)
+        detailed[category] = {
+            "count": count,
+            "score": score,
+            "weight": weight,
+            "threshold": threshold,
+        }
+        weighted_sum += normalized * weight
+
+    overall_score = round(weighted_sum * 100, 1)
+    return detailed, overall_score
 
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/poi_summary")
+def poi_summary(lat: float, lon: float, radius_m: int = 1000):
+    try:
+        elements, cache_hit = fetch_osm_elements(lat, lon, radius_m)
+        category_counts, total_unique = aggregate_categories(elements)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return {
+        "coordinates": {"lat": lat, "lon": lon},
+        "radius_m": radius_m,
+        "total_pois": total_unique,
+        "categories": category_counts,
+        "source": {"cache_hit": cache_hit, "ttl_seconds": CACHE_TTL_SECONDS},
+    }
+
+
+@app.get("/scorecard")
+def scorecard(lat: float, lon: float, radius_m: int = 1000):
+    try:
+        elements, cache_hit = fetch_osm_elements(lat, lon, radius_m)
+        category_counts, total_unique = aggregate_categories(elements)
+        category_details, overall_score = compute_scores(category_counts)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return {
+        "coordinates": {"lat": lat, "lon": lon},
+        "radius_m": radius_m,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "overall_score": overall_score,
+            "total_pois": total_unique,
+        },
+        "categories": category_details,
+        "weights": CATEGORY_WEIGHTS,
+        "source": {"cache_hit": cache_hit, "ttl_seconds": CACHE_TTL_SECONDS},
+    }
 
 @app.get("/score")
 def score(lat: float, lon: float):

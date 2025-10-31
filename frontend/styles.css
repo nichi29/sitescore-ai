@@ -16,12 +16,22 @@ body {
 
 main {
   width: 100%;
-  max-width: 520px;
+  max-width: 960px;
   padding: 48px;
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.82);
   box-shadow: 0 35px 80px rgba(30, 30, 30, 0.12);
   backdrop-filter: blur(20px);
+  display: grid;
+  gap: 32px;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+  align-items: end;
+  margin-bottom: 32px;
 }
 
 .eyebrow {
@@ -104,6 +114,108 @@ button:hover {
 button:active {
   transform: translateY(0);
   box-shadow: 0 12px 22px rgba(10, 132, 255, 0.22);
+}
+
+.ghost {
+  background: rgba(10, 132, 255, 0.12);
+  color: #0a84ff;
+  box-shadow: none;
+}
+
+.ghost:hover {
+  filter: none;
+  box-shadow: none;
+  background: rgba(10, 132, 255, 0.18);
+}
+
+.dashboard {
+  display: grid;
+  gap: 24px;
+}
+
+.panel {
+  padding: 24px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(120, 120, 128, 0.08);
+  display: grid;
+  gap: 16px;
+}
+
+.panel header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.panel h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.score-value {
+  margin: 0;
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: #0a84ff;
+}
+
+.score-meta {
+  margin: 0;
+  font-size: 0.95rem;
+  color: rgba(60, 60, 67, 0.75);
+}
+
+.categories {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.category-card {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(245, 245, 247, 0.85);
+  border: 1px solid rgba(120, 120, 128, 0.1);
+  display: grid;
+  gap: 6px;
+}
+
+.category-card h3 {
+  margin: 0;
+  font-size: 1rem;
+  text-transform: capitalize;
+}
+
+.card-score {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.card-meta {
+  margin: 0;
+  font-size: 0.85rem;
+  color: rgba(60, 60, 67, 0.65);
+}
+
+.panel--map #map {
+  width: 100%;
+  height: min(40vh, 360px);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(120, 120, 128, 0.12);
+}
+
+.inspector {
+  margin-top: 24px;
+}
+
+.inspector summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: rgba(60, 60, 67, 0.75);
 }
 
 pre {
