@@ -4,6 +4,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Dict, List, Set, Tuple
+import re
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -82,9 +83,9 @@ def _build_selector(key: str, values: Set[str]) -> str:
     """Construiește selectorul Overpass pentru o cheie și o listă de valori."""
     if not values:
         return f'["{key}"]'
-    # Folosim regex OR pentru a evita duplicarea blocurilor.
-    pattern = "|".join(sorted(values))
-    return f'["{key}"~"^(?:{pattern})$"]'
+    escaped = [re.escape(v) for v in values]
+    pattern = "|".join(sorted(escaped))
+    return f'["{key}"~"^({pattern})$"]'
 
 
 def build_overpass_query(lat: float, lon: float, radius_m: int) -> str:
@@ -139,6 +140,9 @@ def fetch_osm_elements(lat: float, lon: float, radius_m: int = 1000) -> Tuple[Li
         response = requests.post(
             OVERPASS_ENDPOINT,
             data={"data": query},
+            headers={
+                "User-Agent": os.getenv("SITESCORE_USER_AGENT", "SiteScoreAI/0.1 (+https://sitescore.ai)")
+            },
             timeout=OVERPASS_TIMEOUT_SECONDS + 5,
         )
         response.raise_for_status()
