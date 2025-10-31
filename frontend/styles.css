@@ -28,10 +28,15 @@ main {
 
 .controls {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 20px;
   align-items: end;
   margin-bottom: 32px;
+}
+
+.field--full {
+  grid-column: 1 / -1;
+  position: relative;
 }
 
 .eyebrow {
@@ -84,6 +89,43 @@ input {
   background: rgba(255, 255, 255, 0.85);
   box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.04);
   transition: border 0.2s ease, box-shadow 0.2s ease;
+}
+
+.suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 6px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 24px 48px rgba(30, 30, 30, 0.14);
+  border: 1px solid rgba(120, 120, 128, 0.12);
+  overflow: hidden;
+  z-index: 10;
+}
+
+.suggestions button {
+  display: block;
+  width: 100%;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  padding: 14px 18px;
+  box-shadow: none;
+}
+
+.suggestions button:hover,
+.suggestions button:focus {
+  background: rgba(10, 132, 255, 0.08);
+  color: inherit;
+}
+
+.suggestions .empty {
+  padding: 14px 18px;
+  font-size: 0.9rem;
+  color: rgba(60, 60, 67, 0.7);
 }
 
 input:focus {
@@ -167,6 +209,21 @@ button:active {
   margin: 0;
   font-size: 0.95rem;
   color: rgba(60, 60, 67, 0.75);
+}
+
+.score-meta[data-state="loading"]::after {
+  content: " ⏳";
+}
+
+.score-meta[data-state="error"] {
+  color: #d93025;
+}
+
+.selection-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.85rem;
+  color: rgba(60, 60, 67, 0.6);
 }
 
 .categories {

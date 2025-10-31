@@ -23,20 +23,20 @@
     <p class="lede">Analizează rapid performanța locațiilor cu ajutorul inteligenței artificiale, extrăgând scoruri relevante pentru business-ul tău.</p>
 
     <form onsubmit="return false;" class="controls">
-      <div class="field">
-        <label for="lat">Latitudine</label>
-        <input id="lat" type="number" step="any" value="45.657" />
+      <div class="field field--full">
+        <label for="location">Caută locație</label>
+        <input id="location" type="search" autocomplete="off" placeholder="Ex: Piața Sfatului 1, Brașov" />
+        <div id="suggestions" class="suggestions" aria-live="polite" hidden></div>
       </div>
-      <div class="field">
-        <label for="lon">Longitudine</label>
-        <input id="lon" type="number" step="any" value="25.601" />
-      </div>
+      <input id="lat" type="hidden" value="45.657" />
+      <input id="lon" type="hidden" value="25.601" />
       <div class="field">
         <label for="radius">Rază (m)</label>
         <input id="radius" type="number" step="100" value="1000" min="100" />
       </div>
       <button type="button" id="go">Calculează scorul</button>
       <button type="button" id="exportPdf" class="ghost">Export raport PDF</button>
+      <p class="selection-hint" id="selectionHint">Coordonate curente: 45.657, 25.601</p>
     </form>
 
     <div class="dashboard">
@@ -66,48 +66,142 @@
   <script>
     window.addEventListener('DOMContentLoaded', () => {
       const API_BASE = 'http://127.0.0.1:8000';
+      const INITIAL_COORDS = [45.657, 25.601];
 
-      const map = L.map('map', { zoomControl: false }).setView([45.657, 25.601], 13);
+      const map = L.map('map', { zoomControl: false }).setView(INITIAL_COORDS, 13);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         attribution: '&copy; OpenStreetMap contributors',
       }).addTo(map);
       const poiLayer = L.layerGroup().addTo(map);
-      const marker = L.circleMarker([45.657, 25.601], {
+      const marker = L.circleMarker(INITIAL_COORDS, {
         radius: 10,
         color: '#0a84ff',
         fillColor: '#0a84ff',
         fillOpacity: 0.7,
       }).addTo(poiLayer);
 
+      const locationInput = document.getElementById('location');
+      const suggestionsEl = document.getElementById('suggestions');
+      const latInput = document.getElementById('lat');
+      const lonInput = document.getElementById('lon');
+      const radiusInput = document.getElementById('radius');
+      const selectionHint = document.getElementById('selectionHint');
+      const poiSummary = document.getElementById('poiSummary');
+      const categoryList = document.getElementById('categoryList');
+      const overallScore = document.getElementById('overallScore');
+      const rawOutput = document.getElementById('out');
+      const goButton = document.getElementById('go');
+      let lastSelectedLabel = 'Brașov, România';
+      let suggestionController = null;
+
       const formatScore = (score) => `${Number(score).toFixed(1)} / 100`;
+      const formatCoord = (value) => Number(value).toFixed(5);
+
+      function updateSelection(lat, lon, label) {
+        latInput.value = lat.toFixed(6);
+        lonInput.value = lon.toFixed(6);
+        lastSelectedLabel = label || lastSelectedLabel;
+        if (label) {
+          locationInput.value = label;
+        }
+        selectionHint.textContent = `Coordonate curente: ${formatCoord(lat)}, ${formatCoord(lon)} — ${lastSelectedLabel}`;
+        marker.setLatLng([lat, lon]);
+        map.setView([lat, lon], 13);
+      }
+
+      function hideSuggestions() {
+        suggestionsEl.hidden = true;
+        suggestionsEl.innerHTML = '';
+      }
+
+      function renderSuggestions(items) {
+        if (!items.length) {
+          suggestionsEl.hidden = false;
+          suggestionsEl.innerHTML = `<div class="empty">Nu am găsit sugestii pentru această căutare.</div>`;
+          return;
+        }
+        suggestionsEl.hidden = false;
+        suggestionsEl.innerHTML = '';
+        items.forEach((item) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = item.formatted || item.display_name;
+          btn.addEventListener('click', () => {
+            locationInput.value = item.formatted || item.display_name;
+            updateSelection(item.lat, item.lon, item.formatted || item.display_name);
+            hideSuggestions();
+            evaluateLocation();
+          });
+          suggestionsEl.appendChild(btn);
+        });
+      }
+
+      async function fetchSuggestions(term) {
+        const query = term.trim();
+        if (query.length < 3) {
+          hideSuggestions();
+          return;
+        }
+
+        if (suggestionController) {
+          suggestionController.abort();
+        }
+        suggestionController = new AbortController();
+        const { signal } = suggestionController;
+
+        suggestionsEl.hidden = false;
+        suggestionsEl.innerHTML = `<div class="empty">Se caută locații...</div>`;
+        try {
+          const response = await fetch(`${API_BASE}/geocode/search?q=${encodeURIComponent(query)}&limit=5`, { signal });
+          if (!response.ok) {
+            throw new Error('Nu am putut obține sugestii.');
+          }
+          const data = await response.json();
+          renderSuggestions(data);
+        } catch (error) {
+          if (error.name === 'AbortError') {
+            return;
+          }
+          console.error('Eroare la autocomplete', error);
+          suggestionsEl.hidden = false;
+          suggestionsEl.innerHTML = `<div class="empty">${error.message || 'Eroare la încărcarea sugestiilor.'}</div>`;
+        }
+      }
 
       function renderCategories(categories) {
-        const container = document.getElementById('categoryList');
-        container.innerHTML = '';
+        categoryList.innerHTML = '';
         Object.entries(categories)
           .sort((a, b) => b[1].score - a[1].score)
           .forEach(([name, info]) => {
             const card = document.createElement('article');
             card.className = 'category-card';
             card.innerHTML = `
-            <h3>${name}</h3>
-            <p class="card-score">${formatScore(info.score)}</p>
-            <p class="card-meta">${info.count} puncte de interes</p>
-            <p class="card-meta">Prag ${info.threshold}</p>
-          `;
-          container.appendChild(card);
-        });
+              <h3>${name}</h3>
+              <p class="card-score">${formatScore(info.score)}</p>
+              <p class="card-meta">${info.count} puncte de interes</p>
+              <p class="card-meta">Prag ${info.threshold}</p>
+            `;
+            categoryList.appendChild(card);
+          });
       }
 
       async function evaluateLocation() {
-        const lat = parseFloat(document.getElementById('lat').value);
-        const lon = parseFloat(document.getElementById('lon').value);
-        const radius = parseInt(document.getElementById('radius').value, 10);
+        const lat = parseFloat(latInput.value);
+        const lon = parseFloat(lonInput.value);
+        const radius = parseInt(radiusInput.value, 10);
+
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          poiSummary.dataset.state = 'error';
+          poiSummary.textContent = 'Alege mai întâi o locație din listă.';
+          return;
+        }
+
         const params = new URLSearchParams({ lat, lon, radius_m: radius });
-        document.getElementById('overallScore').textContent = '–';
-        document.getElementById('poiSummary').textContent = 'Se prelucrează...';
-        document.getElementById('categoryList').innerHTML = '';
+        overallScore.textContent = '–';
+        poiSummary.textContent = 'Se prelucrează...';
+        poiSummary.dataset.state = 'loading';
+        categoryList.innerHTML = '';
 
         try {
           const response = await fetch(`${API_BASE}/scorecard?${params.toString()}`);
@@ -115,22 +209,42 @@
             throw new Error(`Eroare API (${response.status})`);
           }
           const payload = await response.json();
-          document.getElementById('out').textContent = JSON.stringify(payload, null, 2);
-          document.getElementById('overallScore').textContent = formatScore(payload.summary.overall_score);
-          document.getElementById('poiSummary').textContent = `${payload.summary.total_pois} POI în ${payload.radius_m}m (cache: ${payload.source.cache_hit ? 'da' : 'nu'})`;
+          poiSummary.dataset.state = 'ready';
+          rawOutput.textContent = JSON.stringify(payload, null, 2);
+          overallScore.textContent = formatScore(payload.summary.overall_score);
+          poiSummary.textContent = `${payload.summary.total_pois} POI în ${payload.radius_m}m (cache: ${payload.source.cache_hit ? 'da' : 'nu'})`;
           renderCategories(payload.categories);
 
-          marker.setLatLng([payload.coordinates.lat, payload.coordinates.lon]);
-          map.setView([payload.coordinates.lat, payload.coordinates.lon], 14);
+          updateSelection(payload.coordinates.lat, payload.coordinates.lon, lastSelectedLabel);
         } catch (error) {
-          document.getElementById('poiSummary').textContent = error.message;
+          console.error('Eroare la evaluare', error);
+          poiSummary.dataset.state = 'error';
+          poiSummary.textContent = error.message || 'Nu am putut obține datele.';
         }
       }
 
-      document.getElementById('go').addEventListener('click', evaluateLocation);
+      locationInput.addEventListener('input', (event) => {
+        fetchSuggestions(event.target.value);
+      });
+
+      locationInput.addEventListener('focus', () => {
+        if (suggestionsEl.innerHTML.trim()) {
+          suggestionsEl.hidden = false;
+        }
+      });
+
+      document.addEventListener('click', (event) => {
+        if (!suggestionsEl.contains(event.target) && event.target !== locationInput) {
+          hideSuggestions();
+        }
+      });
+
+      goButton.addEventListener('click', evaluateLocation);
       document.getElementById('exportPdf').addEventListener('click', () => {
         alert('Exportul PDF va fi disponibil în iterația următoare.');
       });
+
+      updateSelection(INITIAL_COORDS[0], INITIAL_COORDS[1], lastSelectedLabel);
     });
   </script>
 </body>

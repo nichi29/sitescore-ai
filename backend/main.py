@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timezone
 from typing import Dict, List, Set, Tuple
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import requests
 
@@ -61,10 +61,16 @@ OVERPASS_TIMEOUT_SECONDS = int(os.getenv("SITESCORE_OVERPASS_TIMEOUT", "30"))
 CACHE_TTL_SECONDS = int(os.getenv("SITESCORE_CACHE_TTL_SECONDS", "300"))
 MAX_CACHE_SIZE = int(os.getenv("SITESCORE_CACHE_MAX_SIZE", "64"))
 MIN_OVERPASS_INTERVAL_SECONDS = float(os.getenv("SITESCORE_MIN_OVERPASS_INTERVAL", "1.0"))
+NOMINATIM_ENDPOINT = os.getenv("SITESCORE_NOMINATIM_URL", "https://nominatim.openstreetmap.org/search")
+NOMINATIM_TIMEOUT_SECONDS = int(os.getenv("SITESCORE_NOMINATIM_TIMEOUT", "10"))
+GEOCODE_CACHE_TTL_SECONDS = int(os.getenv("SITESCORE_GEOCODE_TTL_SECONDS", "600"))
+GEOCODE_MAX_CACHE = int(os.getenv("SITESCORE_GEOCODE_MAX_SIZE", "128"))
+GEOCODE_MIN_QUERY = int(os.getenv("SITESCORE_GEOCODE_MIN_QUERY", "3"))
 
 _overpass_cache: Dict[Tuple[float, float, int], Tuple[float, List[Dict]]] = {}
 _cache_lock = threading.Lock()
 _last_overpass_call = 0.0
+_geocode_cache: Dict[Tuple[str, int], Tuple[float, List[Dict]]] = {}
 
 
 def _normalize_coord(value: float) -> float:
@@ -208,6 +214,53 @@ def compute_scores(category_counts: Dict[str, int]) -> Tuple[Dict[str, Dict[str,
     overall_score = round(weighted_sum * 100, 1)
     return detailed, overall_score
 
+
+def geocode_search(query: str, limit: int = 5) -> List[Dict]:
+    """Interoghează serviciul Nominatim pentru sugestii de locație."""
+    normalized_query = query.strip()
+    if len(normalized_query) < GEOCODE_MIN_QUERY:
+        return []
+
+    cache_key = (normalized_query.lower(), limit)
+    now = time.monotonic()
+    with _cache_lock:
+        cached = _geocode_cache.get(cache_key)
+        if cached and now - cached[0] <= GEOCODE_CACHE_TTL_SECONDS:
+            return cached[1]
+
+    params = {
+        "q": normalized_query,
+        "format": "jsonv2",
+        "limit": limit,
+        "addressdetails": 1,
+    }
+    headers = {
+        "User-Agent": os.getenv("SITESCORE_USER_AGENT", "SiteScoreAI/0.1 (+https://sitescore.ai)")
+    }
+
+    try:
+        response = requests.get(
+            NOMINATIM_ENDPOINT,
+            params=params,
+            headers=headers,
+            timeout=NOMINATIM_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logging.exception("Eroare la geocodare Nominatim")
+        raise RuntimeError("Serviciul de geocodare este indisponibil") from exc
+
+    suggestions: List[Dict] = response.json()
+
+    with _cache_lock:
+        _geocode_cache[cache_key] = (now, suggestions)
+        if len(_geocode_cache) > GEOCODE_MAX_CACHE:
+            oldest = min(_geocode_cache.items(), key=lambda item: item[1][0])[0]
+            if oldest != cache_key:
+                _geocode_cache.pop(oldest, None)
+
+    return suggestions
+
 @app.get("/health")
 def health():
     return {"ok": True}
@@ -252,6 +305,40 @@ def scorecard(lat: float, lon: float, radius_m: int = 1000):
         "source": {"cache_hit": cache_hit, "ttl_seconds": CACHE_TTL_SECONDS},
     }
 
+
+@app.get("/geocode/search")
+def geocode_endpoint(
+    q: str = Query(..., min_length=1, description="Căutarea introdusă de utilizator"),
+    limit: int = Query(5, ge=1, le=10),
+):
+    try:
+        suggestions = geocode_search(q, limit)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    def format_address(entry: Dict) -> str:
+        address = entry.get("address") or {}
+        parts = [
+            address.get("road") or address.get("pedestrian") or address.get("footway"),
+            address.get("house_number"),
+            address.get("suburb"),
+            address.get("city") or address.get("town") or address.get("village"),
+            address.get("state"),
+            address.get("postcode"),
+            address.get("country"),
+        ]
+        filtered = [part for part in parts if part]
+        return ", ".join(filtered) or entry.get("display_name", "")
+
+    return [
+        {
+            "lat": float(entry["lat"]),
+            "lon": float(entry["lon"]),
+            "display_name": entry.get("display_name", ""),
+            "formatted": format_address(entry),
+        }
+        for entry in suggestions
+    ]
 @app.get("/score")
 def score(lat: float, lon: float):
     # scor V1 (simplu, doar de test): mai mare dacă e aproape de Brașov centru
