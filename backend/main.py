@@ -6,9 +6,18 @@ from datetime import datetime, timezone
 from typing import Dict, List, Set, Tuple
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 import requests
 
 app = FastAPI(title="SiteScore AI")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Definim categoriile principale și tag-urile OSM asociate.
 # Valorile sunt seturi pentru lookup rapid (amenity=restaurant etc).

@@ -28,8 +28,8 @@ main {
 
 .controls {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 20px;
   align-items: end;
   margin-bottom: 32px;
 }
@@ -103,6 +103,7 @@ button {
   background: linear-gradient(135deg, #0071e3 0%, #0a84ff 100%);
   box-shadow: 0 16px 30px rgba(10, 132, 255, 0.25);
   transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+  justify-self: stretch;
 }
 
 button:hover {
@@ -131,6 +132,7 @@ button:active {
 .dashboard {
   display: grid;
   gap: 24px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
 .panel {
