@@ -17,51 +17,95 @@
   ></script>
 </head>
 <body>
-  <main>
-    <p class="eyebrow">Beta Preview</p>
-    <h1>PlaceScore AI — Demo</h1>
-    <p class="lede">Analizează rapid performanța locațiilor cu ajutorul inteligenței artificiale, extrăgând scoruri relevante pentru business-ul tău.</p>
-
-    <form onsubmit="return false;" class="controls">
-      <div class="field field--full">
-        <label for="location">Caută locație</label>
-        <input id="location" type="search" autocomplete="off" placeholder="Ex: Piața Sfatului 1, Brașov" />
-        <div id="suggestions" class="suggestions" aria-live="polite" hidden></div>
+  <div class="app-shell">
+    <header class="hero">
+      <span class="hero-badge">Beta Preview</span>
+      <h1>SiteScore AI</h1>
+      <p class="hero-lede">Analizează potențialul unei locații în câteva secunde. Introdu adresa dorită și obține un scor clar bazat pe infrastructură, servicii și context urban.</p>
+      <div class="hero-score">
+        <span class="score-ring hero-ring"><span id="heroScore">–</span></span>
+        <div class="hero-score-copy">
+          <p class="hero-score-title">Ultimul scor generat</p>
+          <p class="hero-score-meta" id="heroScoreMeta">Alege o locație pentru a vedea rezultatele.</p>
+        </div>
       </div>
-      <input id="lat" type="hidden" value="45.657" />
-      <input id="lon" type="hidden" value="25.601" />
-      <div class="field">
-        <label for="radius">Rază (m)</label>
-        <input id="radius" type="number" step="100" value="1000" min="100" />
-      </div>
-      <button type="button" id="go">Calculează scorul</button>
-      <button type="button" id="exportPdf" class="ghost">Export raport PDF</button>
-      <p class="selection-hint" id="selectionHint">Coordonate curente: 45.657, 25.601</p>
-    </form>
+    </header>
 
-    <div class="dashboard">
-      <section class="panel panel--score">
-        <header>
-          <h2>Scor general</h2>
-          <p class="score-value" id="overallScore">–</p>
-        </header>
-        <p class="score-meta" id="poiSummary">Nicio interogare încă.</p>
-        <div class="categories" id="categoryList"></div>
+    <main class="layout">
+      <section class="panel panel--search">
+        <div class="panel-header">
+          <div>
+            <h2>Locație analizată</h2>
+            <p class="panel-subtitle">Tastează minimum 3 litere pentru sugestii instant</p>
+          </div>
+          <button type="button" id="exportPdf" class="ghost">Exportă PDF</button>
+        </div>
+
+        <form onsubmit="return false;" class="search-form">
+          <label class="field field--full">
+            <span class="field-label">Caută locație</span>
+            <input id="location" type="search" autocomplete="off" placeholder="Ex: Piața Sfatului 1, Brașov" />
+            <div id="suggestions" class="suggestions" aria-live="polite" hidden></div>
+          </label>
+
+          <input id="lat" type="hidden" value="45.657" />
+          <input id="lon" type="hidden" value="25.601" />
+
+          <label class="field">
+            <span class="field-label">Rază analiză (m)</span>
+            <input id="radius" type="number" step="100" value="1000" min="200" />
+          </label>
+
+          <div class="actions">
+            <button type="button" id="go">Calculează scorul</button>
+            <p class="selection-hint" id="selectionHint">Coordonate curente: 45.657, 25.601</p>
+          </div>
+        </form>
       </section>
+
+      <section class="panel panel--insights">
+        <div class="score-card">
+          <div class="score-ring">
+            <span id="overallScore">–</span>
+          </div>
+          <div class="score-copy">
+            <p class="score-title">Scor general</p>
+            <p class="score-meta" id="poiSummary">Selectează o locație pentru a începe.</p>
+          </div>
+        </div>
+
+        <div class="radius-overview">
+          <h3>Compară pe raze</h3>
+          <ul class="radius-list" id="radiusBreakdown"></ul>
+        </div>
+
+        <div class="categories-block">
+          <div class="categories-header">
+            <h3>Categorii cheie</h3>
+            <span class="caption">Sortate după scor</span>
+          </div>
+          <div class="categories" id="categoryList"></div>
+        </div>
+      </section>
+
       <section class="panel panel--map">
-        <header>
-          <h2>Hartă locație</h2>
-          <p class="score-meta">Heatmap-ul va sosi în pasul următor</p>
-        </header>
+        <div class="panel-header">
+          <div>
+            <h2>Hartă locație</h2>
+            <p class="panel-subtitle">Heatmap-ul va sosi în iterația următoare</p>
+          </div>
+        </div>
         <div id="map" role="presentation"></div>
       </section>
-    </div>
 
-    <details class="inspector">
-      <summary>JSON brut</summary>
-      <pre id="out" aria-live="polite"></pre>
-    </details>
-  </main>
+      <section class="panel panel--raw">
+        <details class="inspector">
+          <summary>JSON brut</summary>
+          <pre id="out" aria-live="polite"></pre>
+        </details>
+      </section>
+    </main>
+  </div>
 
   <script>
     window.addEventListener('DOMContentLoaded', () => {
@@ -75,10 +119,10 @@
       }).addTo(map);
       const poiLayer = L.layerGroup().addTo(map);
       const marker = L.circleMarker(INITIAL_COORDS, {
-        radius: 10,
-        color: '#0a84ff',
-        fillColor: '#0a84ff',
-        fillOpacity: 0.7,
+        radius: 9,
+        color: '#0a7aff',
+        fillColor: '#0a7aff',
+        fillOpacity: 0.75,
       }).addTo(poiLayer);
 
       const locationInput = document.getElementById('location');
@@ -89,7 +133,10 @@
       const selectionHint = document.getElementById('selectionHint');
       const poiSummary = document.getElementById('poiSummary');
       const categoryList = document.getElementById('categoryList');
+      const radiusBreakdown = document.getElementById('radiusBreakdown');
       const overallScore = document.getElementById('overallScore');
+      const heroScore = document.getElementById('heroScore');
+      const heroScoreMeta = document.getElementById('heroScoreMeta');
       const rawOutput = document.getElementById('out');
       const goButton = document.getElementById('go');
       let lastSelectedLabel = 'Brașov, România';
@@ -169,6 +216,20 @@
         }
       }
 
+      function renderRadiusSummary(summary) {
+        radiusBreakdown.innerHTML = '';
+        Object.entries(summary)
+          .sort((a, b) => Number(a[0]) - Number(b[0]))
+          .forEach(([radius, info]) => {
+            const item = document.createElement('li');
+            item.innerHTML = `
+              <span class="radius-value">${radius} m</span>
+              <span>${formatScore(info.overall_score)} · ${info.total_pois} POI</span>
+            `;
+            radiusBreakdown.appendChild(item);
+          });
+      }
+
       function renderCategories(categories) {
         categoryList.innerHTML = '';
         Object.entries(categories)
@@ -177,8 +238,10 @@
             const card = document.createElement('article');
             card.className = 'category-card';
             card.innerHTML = `
-              <h3>${name}</h3>
-              <p class="card-score">${formatScore(info.score)}</p>
+              <header>
+                <p class="card-label">${name}</p>
+                <p class="card-score">${formatScore(info.score)}</p>
+              </header>
               <p class="card-meta">${info.count} puncte de interes</p>
               <p class="card-meta">Prag ${info.threshold}</p>
             `;
@@ -199,9 +262,12 @@
 
         const params = new URLSearchParams({ lat, lon, radius_m: radius });
         overallScore.textContent = '–';
+        heroScore.textContent = '–';
+        heroScoreMeta.textContent = 'Alege o locație pentru a vedea rezultatele.';
         poiSummary.textContent = 'Se prelucrează...';
         poiSummary.dataset.state = 'loading';
         categoryList.innerHTML = '';
+        radiusBreakdown.innerHTML = '';
 
         try {
           const response = await fetch(`${API_BASE}/scorecard?${params.toString()}`);
@@ -212,8 +278,13 @@
           poiSummary.dataset.state = 'ready';
           rawOutput.textContent = JSON.stringify(payload, null, 2);
           overallScore.textContent = formatScore(payload.summary.overall_score);
+          heroScore.textContent = formatScore(payload.summary.overall_score);
           poiSummary.textContent = `${payload.summary.total_pois} POI în ${payload.radius_m}m (cache: ${payload.source.cache_hit ? 'da' : 'nu'})`;
+          heroScoreMeta.textContent = `În ${payload.radius_m} m · ${payload.summary.total_pois} puncte de interes`;
           renderCategories(payload.categories);
+          if (payload.radius_summary) {
+            renderRadiusSummary(payload.radius_summary);
+          }
 
           updateSelection(payload.coordinates.lat, payload.coordinates.lon, lastSelectedLabel);
         } catch (error) {
