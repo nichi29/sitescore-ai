@@ -1,6 +1,7 @@
 :root {
   color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --body-font: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --heading-font: "Zalando Sans", -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --surface: rgba(255, 255, 255, 0.82);
   --border: rgba(120, 120, 128, 0.08);
   --shadow: 0 40px 90px rgba(15, 23, 42, 0.12);
@@ -25,6 +26,16 @@ body {
   display: flex;
   justify-content: center;
   padding: 48px 16px 64px;
+  font-family: var(--body-font);
+}
+
+h1,
+h2,
+h3,
+.score-title,
+.hero-score-title,
+.card-label {
+  font-family: var(--heading-font);
 }
 
 .app-shell {
@@ -131,10 +142,6 @@ body {
 .panel--map {
   grid-column: span 5;
   min-height: 420px;
-}
-
-.panel--raw {
-  grid-column: 1 / -1;
 }
 
 .panel--insights,

@@ -4,6 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SiteScore AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=BBH+Sans+Bogle&family=IBM+Plex+Serif:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Zalando+Sans:ital,wght@0,200..900;1,200..900&display=swap"
+    rel="stylesheet"
+  />
   <link rel="stylesheet" href="styles.css" />
   <link
     rel="stylesheet"
@@ -98,12 +104,6 @@
         <div id="map" role="presentation"></div>
       </section>
 
-      <section class="panel panel--raw">
-        <details class="inspector">
-          <summary>JSON brut</summary>
-          <pre id="out" aria-live="polite"></pre>
-        </details>
-      </section>
     </main>
   </div>
 
@@ -137,12 +137,11 @@
       const overallScore = document.getElementById('overallScore');
       const heroScore = document.getElementById('heroScore');
       const heroScoreMeta = document.getElementById('heroScoreMeta');
-      const rawOutput = document.getElementById('out');
       const goButton = document.getElementById('go');
       let lastSelectedLabel = 'Brașov, România';
       let suggestionController = null;
 
-      const formatScore = (score) => `${Number(score).toFixed(1)} / 100`;
+      const formatScore = (score) => Number(score).toFixed(1);
       const formatCoord = (value) => Number(value).toFixed(5);
 
       function updateSelection(lat, lon, label) {
@@ -276,7 +275,6 @@
           }
           const payload = await response.json();
           poiSummary.dataset.state = 'ready';
-          rawOutput.textContent = JSON.stringify(payload, null, 2);
           overallScore.textContent = formatScore(payload.summary.overall_score);
           heroScore.textContent = formatScore(payload.summary.overall_score);
           poiSummary.textContent = `${payload.summary.total_pois} POI în ${payload.radius_m}m (cache: ${payload.source.cache_hit ? 'da' : 'nu'})`;
