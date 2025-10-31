@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <meta charset="utf-8" />
+  <title>SiteScore AI</title>
+</head>
+<body>
+  <h1>SiteScore AI — Demo</h1>
+
+  <label>Lat: <input id="lat" value="45.657"></label>
+  <label>Lon: <input id="lon" value="25.601"></label>
+  <button id="go">Calculează</button>
+
+  <pre id="out"></pre>
+
+  <script>
+    document.getElementById('go').onclick = async () => {
+      const lat = document.getElementById('lat').value;
+      const lon = document.getElementById('lon').value;
+      const r = await fetch(`http://127.0.0.1:8000/score?lat=${lat}&lon=${lon}`);
+      document.getElementById('out').textContent = JSON.stringify(await r.json(), null, 2);
+    };
+  </script>
+</body>
+</html>
